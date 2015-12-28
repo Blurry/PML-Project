@@ -1,0 +1,146 @@
+---
+title: "Practical Machine Learning - Quantified Self Analysis"
+subtitle: Coursera Project
+author: "Yuri Danilenko"
+hitheme: tomorrow
+output: html_document
+widgets: mathjax
+---
+  
+  
+## Introduction  
+
+The project concerns the analysis and prediction of the data, collected using 
+wearable fitness devices. Specifically, it's required to do a quantification of how well barbell lifts excercise are done, using the data collected from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, who were asked to
+perform excercise in 5 different ways. 
+
+We will use the data to predict the manner in which they did the exercise. Thus, the goal of this course project is to build a model to predict the classification, represented by the "classe" variable.
+
+(The data and description is available here: http://groupware.les.inf.puc-rio.br/har)
+
+## Preparation  
+```{r, cache = T}
+# Packages for analysis
+library(caret)
+library(randomForest)
+library(corrplot)
+
+# The random seed 
+set.seed(7610)
+```
+### Loading the Data
+```{r, cache = T}
+training_data_url <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_data_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+data_dir <- "./pmldataset"
+training_file_name <- paste0(data_dir, "/pml-training.csv")
+test_file_name  <- paste0(data_dir, "/pml-testing.csv")
+# Download data 1st time only
+if (!file.exists(data_dir)) {
+  dir.create(data_dir)
+  download.file(training_data_url, destfile=training_file_name, method="curl")
+  download.file(test_data_url, destfile=test_file_name, method="curl")
+}
+# Load CSV data into data frames
+training_dataset <- read.csv(training_file_name)
+test_dataset <- read.csv(test_file_name)
+```
+
+## Exploratory Data Analysis
+
+```{r, cache = T}
+dim(training_dataset)
+dim(test_dataset)
+```
+The training data set size is 19622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables. 
+
+## Data Cleaning
+To proceed with the analysis, we have to clean up the data. We start from removing columns that contain NA  values, "near zero variance" predictor values and first 7 metadata columns:
+```{r, cache = T}
+training_dataset <- training_dataset[, colSums(is.na(training_dataset)) == 0] 
+test_dataset <- test_dataset[, colSums(is.na(test_dataset)) == 0] 
+# Get rid of near zero values
+nearZeroTraining <- nearZeroVar(training_dataset)
+training_dataset <- training_dataset[, -nearZeroTraining]
+nearZeroTest <- nearZeroVar(test_dataset)
+training_dataset <- training_dataset[, -nearZeroTest]
+# Remove metadata columns from the training
+training_dataset <- training_dataset[, -(1:7)]
+dim(training_dataset)
+```  
+
+Now, the cleaned training data set contains 19622 observations and 53 variables, while the testing data set contains 20 observations and 53 variables. The "classe" variable is still in the cleaned training set.
+
+### Partitioning Data 
+
+Let's partition data into a real training data set and a validation data set using 70% to 30% split:  
+```{r, cache = T}
+inTrain <- createDataPartition(training_dataset$classe, p=0.70, list=F)
+training_data <- training_dataset[inTrain, ]
+validation_data <- training_dataset[-inTrain, ]
+```
+
+## Prediction With Random Forest Model
+
+For the model we going to use the **Random Forest** approach, since it's the most appropriate for this prediction task, assuming that multiple covariates could be correlated, with  **K-fold cross validation**. After experimentation with model parameters, we decided to use 8 folds cross validation size with number of trees = 250, as good option from computation time and accuracy standpoint: 
+
+```{r, cache = T}
+model_file_name <- paste0(data_dir, "/model_random_forest")
+# Cache model in file to avoide costly re-calculations
+if (!file.exists(model_file_name)) {
+  model_random_forest <- train(classe ~ ., data=training_data, method="rf", trControl=trainControl(method="cv", 8), ntree=250)
+  saveRDS(model_random_forest, model_file_name)
+} else {
+  model_random_forest <- readRDS(model_file_name)
+}
+model_random_forest
+```
+Then, we estimate the performance of the model on the validation data set.  
+```{r, cache = T}
+prediction_validation <- predict(model_random_forest, validation_data)
+cm <- confusionMatrix(validation_data$classe, prediction_validation)
+cm
+```
+The estimated accuracy of the model is `r format(100*cm$overall[1], digits=3)` and the estimated out-of-sample error is `r format(100*(1-cm$overall[1]), digits=3)`%.
+
+The plot with variable importance for the recommended model could be seen in the Appendix 1.
+
+## Predicting for Test Data Set
+Now we are ready to calculate the prediction for the test data set below:  
+```{r, cache = T}
+prediction <- predict(model_random_forest, test_dataset[, -length(names(test_dataset))])
+prediction
+```  
+
+## Appendix 1: Figures
+
+### Correlation Matrix  
+```{r, cache = T}
+corrplot(cor(training_data[, -length(names(training_data))]), 
+         method="circle", type = "upper", tl.col="black", tl.cex = 0.5, tl.offset=0.2, tl.pos = "td")
+```
+
+
+### Variable Importance Plot
+```{r, cache = T}
+plot(varImp(model_random_forest))
+```
+
+# Appendix 2: Course Project Test Cases
+
+The files for the test submission were generated by the code below: 
+
+```{r test_cases}
+## Convert to char vector
+prediction <- as.character(prediction)
+## Function that writes to single files (from the instructions)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+## Write files
+pml_write_files(prediction)
+```
